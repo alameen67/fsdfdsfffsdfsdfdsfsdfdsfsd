@@ -1,0 +1,12 @@
+{
+  "name": "brainrot-stream-ws",
+  "version": "1.0.0",
+  "description": "WebSocket server and minimal web view for Roblox Brainrot stats",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
