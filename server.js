@@ -5,6 +5,22 @@ const { WebSocketServer, WebSocket } = require("ws");
 
 const PORT = process.env.PORT || 3000;
 
+// Unique Active Users Map: key -> { ws, lastSeen, username, jobId }
+const activeUsers = new Map();
+
+function getUniqueUserCount() {
+    const now = Date.now();
+    let count = 0;
+    for (const [key, data] of activeUsers.entries()) {
+        if (now - data.lastSeen < 30000) {
+            count++;
+        } else {
+            activeUsers.delete(key);
+        }
+    }
+    return Math.max(1, count);
+}
+
 const server = http.createServer((req, res) => {
     // CORS headers for broad compatibility
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -17,10 +33,26 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // Online User Count Endpoint
-    if (req.method === "GET" && (req.url === "/api/online" || req.url === "/api/users")) {
+    // Reset online users endpoint
+    if (req.url === "/api/reset") {
+        activeUsers.clear();
+        broadcastOnlineCount();
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ count: wss.clients.size }));
+        res.end(JSON.stringify({ success: true, message: "Users reset" }));
+        return;
+    }
+
+    // Online User Count Endpoint (Deduplicated per JobId + Username)
+    if (req.method === "GET" && (req.url.startsWith("/api/online") || req.url.startsWith("/api/users"))) {
+        const urlObj = new URL(req.url, `http://localhost:${PORT}`);
+        const jobId = urlObj.searchParams.get("jobId");
+        const username = urlObj.searchParams.get("username");
+        if (jobId && username) {
+            const key = `${jobId}_${username.toLowerCase()}`;
+            activeUsers.set(key, { lastSeen: Date.now(), username, jobId });
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ count: getUniqueUserCount() }));
         return;
     }
 
@@ -33,7 +65,12 @@ const server = http.createServer((req, res) => {
         req.on("end", () => {
             try {
                 const data = JSON.parse(body);
+                if (data.jobId && data.username) {
+                    const key = `${data.jobId}_${data.username.toLowerCase()}`;
+                    activeUsers.set(key, { lastSeen: Date.now(), username: data.username, jobId: data.jobId });
+                }
                 broadcast(data);
+                broadcastOnlineCount();
                 res.writeHead(200, { "Content-Type": "application/json" });
                 res.end(JSON.stringify({ success: true }));
             } catch (err) {
@@ -69,25 +106,50 @@ function broadcast(data) {
 }
 
 function broadcastOnlineCount() {
-    broadcast({ type: "onlineCount", count: wss.clients.size });
+    broadcast({ type: "onlineCount", count: getUniqueUserCount() });
 }
 
+// Cleanup stale users periodically every 10 seconds
+setInterval(() => {
+    const now = Date.now();
+    let changed = false;
+    for (const [key, data] of activeUsers.entries()) {
+        if (now - data.lastSeen >= 30000) {
+            activeUsers.delete(key);
+            changed = true;
+        }
+    }
+    if (changed) {
+        broadcastOnlineCount();
+    }
+}, 10000);
+
 wss.on("connection", (ws) => {
-    console.log("[+] Client connected via WebSocket. Online:", wss.clients.size);
-    broadcastOnlineCount();
+    let clientKey = null;
 
     ws.on("message", (message) => {
         try {
             const data = JSON.parse(message.toString());
-            if (data.type === "getOnline" || data.type === "ping") {
-                ws.send(JSON.stringify({ type: "onlineCount", count: wss.clients.size }));
+            
+            // Heartbeat / ping with deduplication by JobId + Username
+            if (data.type === "heartbeat" || data.type === "getOnline" || data.type === "ping" || data.type === "join") {
+                if (data.jobId && data.username) {
+                    clientKey = `${data.jobId}_${data.username.toLowerCase()}`;
+                    activeUsers.set(clientKey, { ws, lastSeen: Date.now(), username: data.username, jobId: data.jobId });
+                }
+                ws.send(JSON.stringify({ type: "onlineCount", count: getUniqueUserCount() }));
+                broadcastOnlineCount();
                 return;
             }
-            console.log("[>] Received payload:", data);
-            // Broadcast received data to all connected clients (browsers & scripts)
+
+            if (data.jobId && data.username) {
+                clientKey = `${data.jobId}_${data.username.toLowerCase()}`;
+                activeUsers.set(clientKey, { ws, lastSeen: Date.now(), username: data.username, jobId: data.jobId });
+            }
+
+            // Broadcast duel data
             broadcast(data);
         } catch (e) {
-            console.log("[!] Received non-JSON or raw text:", message.toString());
             broadcast({
                 username: "Unknown",
                 brainrotName: message.toString(),
@@ -98,15 +160,17 @@ wss.on("connection", (ws) => {
     });
 
     ws.on("close", () => {
-        console.log("[-] Client disconnected. Online:", wss.clients.size);
+        if (clientKey) {
+            activeUsers.delete(clientKey);
+        }
         broadcastOnlineCount();
     });
 });
 
 server.listen(PORT, () => {
     console.log(`===========================================`);
-    console.log(` Brainrot Stream Server Running!`);
+    console.log(` Brainrot Stream Server Running on Port ${PORT}`);
     console.log(` Web View: http://localhost:${PORT}`);
-    console.log(` WebSocket URL: ws://localhost:${PORT}/ws`);
+    console.log(` WebSocket: ws://localhost:${PORT}/ws`);
     console.log(`===========================================`);
 });
