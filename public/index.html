@@ -7,6 +7,7 @@
 <div id="entries"></div>
 <script>
 const container = document.getElementById("entries");
+const seenIds = new Set();
 
 function connect() {
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -17,6 +18,10 @@ function connect() {
         try {
             const data = JSON.parse(event.data);
             
+            // Deduplicate
+            if (data.id && seenIds.has(data.id)) return;
+            if (data.id) seenIds.add(data.id);
+
             const div = document.createElement("div");
             div.style.marginBottom = "20px";
             div.style.whiteSpace = "pre-wrap";
@@ -28,8 +33,10 @@ What mutation it is: ${data.mutation || "Normal"}`;
 
             container.appendChild(div);
 
+            // Disappears after 15 seconds
             setTimeout(() => {
                 div.remove();
+                if (data.id) seenIds.delete(data.id);
             }, 15000);
         } catch (e) {
             console.error(e);
