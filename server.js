@@ -17,6 +17,13 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    // Online User Count Endpoint
+    if (req.method === "GET" && (req.url === "/api/online" || req.url === "/api/users")) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ count: wss.clients.size }));
+        return;
+    }
+
     // HTTP POST Fallback endpoint for Roblox scripts using http_request/request
     if (req.method === "POST" && req.url === "/api/post") {
         let body = "";
@@ -61,14 +68,23 @@ function broadcast(data) {
     });
 }
 
+function broadcastOnlineCount() {
+    broadcast({ type: "onlineCount", count: wss.clients.size });
+}
+
 wss.on("connection", (ws) => {
-    console.log("[+] Client connected via WebSocket");
+    console.log("[+] Client connected via WebSocket. Online:", wss.clients.size);
+    broadcastOnlineCount();
 
     ws.on("message", (message) => {
         try {
             const data = JSON.parse(message.toString());
+            if (data.type === "getOnline" || data.type === "ping") {
+                ws.send(JSON.stringify({ type: "onlineCount", count: wss.clients.size }));
+                return;
+            }
             console.log("[>] Received payload:", data);
-            // Broadcast received data to all connected clients (browsers)
+            // Broadcast received data to all connected clients (browsers & scripts)
             broadcast(data);
         } catch (e) {
             console.log("[!] Received non-JSON or raw text:", message.toString());
@@ -82,7 +98,8 @@ wss.on("connection", (ws) => {
     });
 
     ws.on("close", () => {
-        console.log("[-] Client disconnected");
+        console.log("[-] Client disconnected. Online:", wss.clients.size);
+        broadcastOnlineCount();
     });
 });
 
