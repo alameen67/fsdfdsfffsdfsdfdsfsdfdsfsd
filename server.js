@@ -71,29 +71,7 @@ const server = http.createServer((req, res) => {
                 }
                 broadcast(data);
                 broadcastOnlineCount();
-
-                // Forward user's post to Ace Duels Relay
-                if (aceWs && aceWs.readyState === WebSocket.OPEN && data.brainrotName) {
-                    try {
-                        const valNum = parseValueNumber(data.generation || "0");
-                        const acePayload = {
-                            type: "post",
-                            kind: "duel",
-                            listing: {
-                                item: data.brainrotName || "Unknown",
-                                itemDisplay: data.brainrotName || "Unknown",
-                                valueText: data.generation || "$0/s",
-                                valueNumber: valNum,
-                                mutation: (data.mutation && data.mutation !== "None") ? data.mutation : "",
-                                traits: "Secret",
-                                wants: "",
-                                minValue: 0
-                            }
-                        };
-                        aceWs.send(JSON.stringify(acePayload));
-                    } catch (err) {}
-                }
-
+                forwardPostToAce(data);
                 res.writeHead(200, { "Content-Type": "application/json" });
                 res.end(JSON.stringify({ success: true }));
             } catch (err) {
@@ -197,27 +175,8 @@ wss.on("connection", (ws) => {
             // Broadcast duel data to all connected users
             broadcast(data);
 
-            // Forward user's post to Ace Duels Relay from your server (shielding user IP)
-            if (aceWs && aceWs.readyState === WebSocket.OPEN && data.brainrotName) {
-                try {
-                    const valNum = parseValueNumber(data.generation || "0");
-                    const acePayload = {
-                        type: "post",
-                        kind: "duel",
-                        listing: {
-                            item: data.brainrotName || "Unknown",
-                            itemDisplay: data.brainrotName || "Unknown",
-                            valueText: data.generation || "$0/s",
-                            valueNumber: valNum,
-                            mutation: (data.mutation && data.mutation !== "None") ? data.mutation : "",
-                            traits: "Secret",
-                            wants: "",
-                            minValue: 0
-                        }
-                    };
-                    aceWs.send(JSON.stringify(acePayload));
-                } catch (err) {}
-            }
+            // Forward user's post to Ace Duels Relay as their REAL player username
+            forwardPostToAce(data);
         } catch (e) {
             broadcast({
                 username: "Unknown",
@@ -254,7 +213,6 @@ function connectAceDuelsRelay() {
             try {
                 const data = JSON.parse(raw.toString());
                 
-                // Identify as VampireXHook Relay
                 if (data.type === "connect_ok") {
                     aceWs.send(JSON.stringify({
                         type: "identify",
@@ -309,6 +267,48 @@ function connectAceDuelsRelay() {
         });
     } catch (e) {
         setTimeout(connectAceDuelsRelay, 5000);
+    }
+}
+
+function forwardPostToAce(data) {
+    if (!aceWs || aceWs.readyState !== WebSocket.OPEN || !data || !data.brainrotName) return;
+    try {
+        const username = data.username || "Unknown";
+        const displayName = data.displayName || username;
+        const userId = data.userId || 11014601239;
+        const valNum = parseValueNumber(data.generation || "0");
+
+        // Dynamically identify as the actual Roblox player who clicked Post Duels
+        aceWs.send(JSON.stringify({
+            type: "identify",
+            name: username,
+            username: username,
+            displayName: displayName,
+            userId: userId
+        }));
+
+        // Send listing with their real username and display name
+        const acePayload = {
+            type: "post",
+            kind: "duel",
+            listing: {
+                username: username,
+                displayName: displayName,
+                userId: userId,
+                item: data.brainrotName || "Unknown",
+                itemDisplay: data.brainrotName || "Unknown",
+                valueText: data.generation || "$0/s",
+                valueNumber: valNum,
+                mutation: (data.mutation && data.mutation !== "None") ? data.mutation : "",
+                traits: "Secret",
+                wants: "",
+                minValue: 0
+            }
+        };
+        aceWs.send(JSON.stringify(acePayload));
+        console.log(`[🚀 Proxy] Forwarded duel for @${username} (${displayName}): ${data.brainrotName} (${data.generation})`);
+    } catch (err) {
+        console.log("[!] Error forwarding post to Ace:", err.message);
     }
 }
 
