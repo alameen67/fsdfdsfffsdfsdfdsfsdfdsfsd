@@ -52,7 +52,7 @@ const server = http.createServer((req, res) => {
             activeUsers.set(key, { lastSeen: Date.now(), username, jobId });
         }
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ count: getUniqueUserCount() }));
+        res.end(JSON.stringify({ count: getUniqueUserCount() + aceOnlineCount }));
         return;
     }
 
@@ -67,14 +67,15 @@ const server = http.createServer((req, res) => {
                 const data = JSON.parse(body);
                 if (data.jobId && data.username) {
                     const key = `${data.jobId}_${data.username.toLowerCase()}`;
-                    activeUsers.set(key, { lastSeen: Date.now(), username, jobId: data.jobId });
+                    activeUsers.set(key, { lastSeen: Date.now(), username: data.username, jobId: data.jobId });
                 }
                 broadcast(data);
                 broadcastOnlineCount();
 
-                // Forward to Ace Duels
+                // Forward user's post to Ace Duels Relay
                 if (aceWs && aceWs.readyState === WebSocket.OPEN && data.brainrotName) {
                     try {
+                        const valNum = parseValueNumber(data.generation || "0");
                         const acePayload = {
                             type: "post",
                             kind: "duel",
@@ -82,7 +83,7 @@ const server = http.createServer((req, res) => {
                                 item: data.brainrotName || "Unknown",
                                 itemDisplay: data.brainrotName || "Unknown",
                                 valueText: data.generation || "$0/s",
-                                valueNumber: 0,
+                                valueNumber: valNum,
                                 mutation: (data.mutation && data.mutation !== "None") ? data.mutation : "",
                                 traits: "Secret",
                                 wants: "",
@@ -118,6 +119,22 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
+let aceOnlineCount = 0;
+
+function parseValueNumber(valStr) {
+    if (!valStr || typeof valStr !== "string") return 0;
+    const clean = valStr.replace(/[\$,\/s\s]/g, "").toUpperCase();
+    const multipliers = { "K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12 };
+    for (const [sfx, mult] of Object.entries(multipliers)) {
+        if (clean.endsWith(sfx)) {
+            const num = parseFloat(clean.slice(0, -sfx.length));
+            if (!isNaN(num)) return Math.floor(num * mult);
+        }
+    }
+    const num = parseFloat(clean);
+    return isNaN(num) ? 0 : Math.floor(num);
+}
+
 function broadcast(data) {
     const payload = typeof data === "string" ? data : JSON.stringify(data);
     wss.clients.forEach(client => {
@@ -128,7 +145,15 @@ function broadcast(data) {
 }
 
 function broadcastOnlineCount() {
-    broadcast({ type: "onlineCount", count: getUniqueUserCount() });
+    const myUsers = getUniqueUserCount();
+    const totalUsers = myUsers + aceOnlineCount;
+    broadcast({ 
+        type: "onlineCount", 
+        count: totalUsers, 
+        users: totalUsers,
+        aceCount: aceOnlineCount, 
+        vampCount: myUsers 
+    });
 }
 
 // Cleanup stale users periodically every 10 seconds
@@ -159,7 +184,7 @@ wss.on("connection", (ws) => {
                     clientKey = `${data.jobId}_${data.username.toLowerCase()}`;
                     activeUsers.set(clientKey, { ws, lastSeen: Date.now(), username: data.username, jobId: data.jobId });
                 }
-                ws.send(JSON.stringify({ type: "onlineCount", count: getUniqueUserCount() }));
+                ws.send(JSON.stringify({ type: "onlineCount", count: getUniqueUserCount() + aceOnlineCount }));
                 broadcastOnlineCount();
                 return;
             }
@@ -169,12 +194,13 @@ wss.on("connection", (ws) => {
                 activeUsers.set(clientKey, { ws, lastSeen: Date.now(), username: data.username, jobId: data.jobId });
             }
 
-            // Broadcast duel data to all your connected users
+            // Broadcast duel data to all connected users
             broadcast(data);
 
             // Forward user's post to Ace Duels Relay from your server (shielding user IP)
             if (aceWs && aceWs.readyState === WebSocket.OPEN && data.brainrotName) {
                 try {
+                    const valNum = parseValueNumber(data.generation || "0");
                     const acePayload = {
                         type: "post",
                         kind: "duel",
@@ -182,7 +208,7 @@ wss.on("connection", (ws) => {
                             item: data.brainrotName || "Unknown",
                             itemDisplay: data.brainrotName || "Unknown",
                             valueText: data.generation || "$0/s",
-                            valueNumber: 0,
+                            valueNumber: valNum,
                             mutation: (data.mutation && data.mutation !== "None") ? data.mutation : "",
                             traits: "Secret",
                             wants: "",
@@ -238,6 +264,10 @@ function connectAceDuelsRelay() {
                         userId: 11014601239
                     }));
                 } 
+                else if (data.type === "presence" && typeof data.count === "number") {
+                    aceOnlineCount = data.count;
+                    broadcastOnlineCount();
+                }
                 // Stream Ace Duels listings directly to your connected users
                 else if ((data.type === "listings" || data.type === "deals" || data.type === "items") && Array.isArray(data.data)) {
                     data.data.forEach(item => {
