@@ -67,7 +67,7 @@ const server = http.createServer((req, res) => {
                 const data = JSON.parse(body);
                 if (data.jobId && data.username) {
                     const key = `${data.jobId}_${data.username.toLowerCase()}`;
-                    activeUsers.set(key, { lastSeen: Date.now(), username: data.username, jobId: data.jobId });
+                    activeUsers.set(key, { lastSeen: Date.now(), username, jobId: data.jobId });
                 }
                 broadcast(data);
                 broadcastOnlineCount();
@@ -244,11 +244,11 @@ function connectAceDuelsRelay() {
                         broadcast({
                             id: item.listingId || `${item.username}_${item.item}_${Date.now()}`,
                             username: item.username || item.displayName || "Unknown",
-                            brainrotName = item.itemDisplay || item.item || "Unknown",
-                            generation = item.valueText || item.income || "",
-                            mutation = (item.mutation && item.mutation !== "None") ? item.mutation : "None",
-                            source = "Ace Duels",
-                            timestamp = Date.now()
+                            brainrotName: item.itemDisplay || item.item || "Unknown",
+                            generation: item.valueText || item.income || "",
+                            mutation: (item.mutation && item.mutation !== "None") ? item.mutation : "None",
+                            source: "Ace Duels",
+                            timestamp: Date.now()
                         });
                     });
                 } else if (data.type === "new_listing" || data.type === "post") {
@@ -257,11 +257,11 @@ function connectAceDuelsRelay() {
                         broadcast({
                             id: item.listingId || `${item.username}_${item.item}_${Date.now()}`,
                             username: item.username || item.displayName || "Unknown",
-                            brainrotName = item.itemDisplay || item.item || "Unknown",
-                            generation = item.valueText || item.income || "",
-                            mutation = (item.mutation && item.mutation !== "None") ? item.mutation : "None",
-                            source = "Ace Duels",
-                            timestamp = Date.now()
+                            brainrotName: item.itemDisplay || item.item || "Unknown",
+                            generation: item.valueText || item.income || "",
+                            mutation: (item.mutation && item.mutation !== "None") ? item.mutation : "None",
+                            source: "Ace Duels",
+                            timestamp: Date.now()
                         });
                     }
                 }
