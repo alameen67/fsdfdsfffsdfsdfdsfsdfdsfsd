@@ -52,7 +52,7 @@ const server = http.createServer((req, res) => {
             activeUsers.set(key, { lastSeen: Date.now(), username, jobId });
         }
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ count: getUniqueUserCount() + aceOnlineCount }));
+        res.end(JSON.stringify({ count: getUniqueUserCount() }));
         return;
     }
 
@@ -134,6 +134,7 @@ function broadcastOnlineCount() {
     });
 }
 
+
 // Cleanup stale users periodically every 10 seconds
 setInterval(() => {
     const now = Date.now();
@@ -162,7 +163,7 @@ wss.on("connection", (ws) => {
                     clientKey = `${data.jobId}_${data.username.toLowerCase()}`;
                     activeUsers.set(clientKey, { ws, lastSeen: Date.now(), username: data.username, jobId: data.jobId });
                 }
-                ws.send(JSON.stringify({ type: "onlineCount", count: getUniqueUserCount() + aceOnlineCount }));
+                ws.send(JSON.stringify({ type: "onlineCount", count: getUniqueUserCount() }));
                 broadcastOnlineCount();
                 return;
             }
@@ -187,6 +188,7 @@ wss.on("connection", (ws) => {
         }
     });
 
+
     ws.on("close", () => {
         if (clientKey) {
             activeUsers.delete(clientKey);
@@ -198,21 +200,35 @@ wss.on("connection", (ws) => {
 // ============================================================================
 // 🛡️ ACE DUELS BACKGROUND PROXY (Shields User IPs & Streams Listings)
 // ============================================================================
-const ACE_RELAY_URL = "wss://aceduelsfinder.kellygrant0527.workers.dev/ws";
+const ACE_RELAY_URL = process.env.ACE_RELAY_URL || "wss://acefinder-6f1fbcc1e2.kellygrant0527.workers.dev/ws";
 let aceWs = null;
+let aceHeartbeatInterval = null;
 
 function connectAceDuelsRelay() {
     try {
+        if (aceHeartbeatInterval) {
+            clearInterval(aceHeartbeatInterval);
+            aceHeartbeatInterval = null;
+        }
+
         aceWs = new WebSocket(ACE_RELAY_URL);
 
         aceWs.on("open", () => {
-            console.log("[+] [Proxy] Connected to Ace Duels Relay (Server-Side Proxy Active)");
+            console.log("[+] [Proxy] Connected to New Ace Finder Relay (Server-Side Proxy Active)");
+            
+            // Keepalive ping every 15s to prevent Cloudflare Worker timeout
+            aceHeartbeatInterval = setInterval(() => {
+                if (aceWs && aceWs.readyState === WebSocket.OPEN) {
+                    try { aceWs.send(JSON.stringify({ type: "ping" })); } catch (e) {}
+                }
+            }, 15000);
         });
 
         aceWs.on("message", (raw) => {
             try {
                 const data = JSON.parse(raw.toString());
                 
+                // Identify as VampireXHook Relay
                 if (data.type === "connect_ok") {
                     aceWs.send(JSON.stringify({
                         type: "identify",
@@ -258,6 +274,10 @@ function connectAceDuelsRelay() {
 
         aceWs.on("close", () => {
             console.log("[-] [Proxy] Ace Duels connection closed. Reconnecting in 5s...");
+            if (aceHeartbeatInterval) {
+                clearInterval(aceHeartbeatInterval);
+                aceHeartbeatInterval = null;
+            }
             aceWs = null;
             setTimeout(connectAceDuelsRelay, 5000);
         });
@@ -313,6 +333,7 @@ function forwardPostToAce(data) {
 }
 
 connectAceDuelsRelay();
+
 
 server.listen(PORT, "0.0.0.0", () => {
     console.log(`===========================================`);
